@@ -3,12 +3,23 @@ import { useAuthStore } from "../../store/authStore.js";
 import { getPOList } from "../../api/poApi";
 import Button from "../../components/ui/Button.jsx";
 
+// Status color map
+const statusColor = {
+  'Submitted': '#2563eb',
+  'Manager Pending': '#f59e42',
+  'Finance Pending': '#ef4444',
+  'Director Pending': '#22c55e',
+  'Approved': '#16a34a',
+  'Rejected': '#ef4444',
+  'Draft': '#64748b',
+};
+
 // Simple modal component for demo
 function Modal({ open, onClose, children }) {
   if (!open) return null;
   return (
     <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.2)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "#fff", borderRadius: 12, padding: 32, minWidth: 340, minHeight: 120, position: "relative" }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 32, minWidth: 340, position: "relative" }}>
         <button onClick={onClose} style={{ position: "absolute", top: 12, right: 16, background: "none", border: "none", fontSize: 22, cursor: "pointer" }}>×</button>
         {children}
       </div>
@@ -17,30 +28,31 @@ function Modal({ open, onClose, children }) {
 }
 
 export default function Dashboard() {
-  const [importing, setImporting] = useState(false);
-  const [showErrorPopup, setShowErrorPopup] = useState(false);
+  // State declarations
+  const [poList, setPoList] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const pagedPOs = poList.slice((page - 1) * pageSize, page * pageSize);
+  const pageCount = Math.ceil(poList.length / pageSize);
+  const [showAddPo, setShowAddPo] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
-  const [showAddPo, setShowAddPo] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [poList, setPoList] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  const { user, role, setAuth } = useAuthStore();
+  const [importing, setImporting] = useState(false);
+  const [showErrorPopup, setShowErrorPopup] = useState(false);
+  const dropdownRef = useRef(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef();
 
-  // Import API
+  const { setAuth, user } = useAuthStore();
+
   async function handleImport() {
+    if (!importFile) return;
+    setImporting(true);
     setImportError("");
     setImportResult(null);
-    setImporting(true);
-    if (!importFile) {
-      setImportError("Please select a file.");
-      setImporting(false);
-      return;
-    }
+    setShowErrorPopup(false);
     try {
       const { importPO } = await import("../../api/poApi");
       const resp = await importPO(importFile);
@@ -81,10 +93,11 @@ export default function Dashboard() {
     setLoading(true);
     getPOList()
       .then(res => {
-        if (res && res.items) {
-          setPoList(res.items);
-        }
+        console.log("PO API:", res);
+        // Expecting { data: { items: [...] } }
+        setPoList(Array.isArray(res?.data?.items) ? res.data.items : []);
       })
+      .catch(err => console.error(err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -213,35 +226,63 @@ export default function Dashboard() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#f4f6fa", color: "#64748b" }}>
-                  <th style={{ textAlign: "left", padding: 8 }}>PO Number</th>
-                  <th style={{ textAlign: "left", padding: 8 }}>Vendor</th>
-                  <th style={{ textAlign: "right", padding: 8 }}>Amount</th>
-                  <th style={{ textAlign: "center", padding: 8 }}>Status</th>
-                  <th style={{ textAlign: "center", padding: 8 }}>Action</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>PO Number</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>PO Date</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Vendor</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Vendor Email</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Vendor Phone</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Department</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Project</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Priority</th>
+                  <th style={{ textAlign: "center", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Status</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Remarks</th>
+                  <th style={{ textAlign: "right", padding: "10px 12px", fontWeight: 600, fontSize: 15 }}>Amount</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="5">Loading...</td></tr>
+                  <tr><td colSpan="11">Loading...</td></tr>
                 ) : poList.length === 0 ? (
-                  <tr><td colSpan="5">No purchase orders found.</td></tr>
+                  <tr><td colSpan="11" style={{ color: 'red' }}>No purchase orders found.<br />Check console for API errors.</td></tr>
                 ) : (
-                  poList.map((po, idx) => (
-                    <tr key={po.po_number || idx}>
-                      <td>{po.po_number}</td>
-                      <td>{po.vendor}</td>
-                      <td>{po.amount}</td>
-                      <td>{po.status}</td>
-                      <td>
-                        <button style={{ marginRight: 8, padding: "2px 10px", borderRadius: 6, border: "none", background: "#e5e7eb", color: "#222" }}>Edit</button>
-                        <button style={{ marginRight: 8, padding: "2px 10px", borderRadius: 6, border: "none", background: "#2563eb", color: "#fff" }}>View</button>
-                        <button style={{ padding: "2px 10px", borderRadius: 6, border: "none", background: "#64748b", color: "#fff" }}>Track</button>
+                  pagedPOs.map((po, idx) => (
+                    <tr key={po.id || po.po_number || idx}>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.po_number}</td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.po_date}</td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.vendor}</td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.vendor_email}</td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.vendor_phone}</td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.department}</td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.project_name}</td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.priority}</td>
+                      <td style={{ textAlign: "center", padding: "10px 12px", fontSize: 14 }}>
+                        <span style={{ color: statusColor[po.status] || '#333', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px', background: statusColor[po.status] ? statusColor[po.status] + '22' : '#eee' }}>{po.status}</span>
+                      </td>
+                      <td style={{ textAlign: "left", padding: "10px 12px", fontSize: 14 }}>{po.remarks}</td>
+                      <td style={{ textAlign: "right", padding: "10px 12px", fontSize: 14 }}>
+                        {typeof po.total_amount === 'number' ? po.total_amount.toLocaleString('en-IN', { style: 'currency', currency: po.currency || 'INR' }) : '₹0'}
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+              {/* Pagination Controls */}
+              {pageCount > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16, gap: 8 }}>
+                  <button onClick={() => setPage(page - 1)} disabled={page === 1} style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #e5e7eb', background: page === 1 ? '#e5e7eb' : '#fff', color: '#222', cursor: page === 1 ? 'not-allowed' : 'pointer' }}>Prev</button>
+                  {Array.from({ length: pageCount }, (_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setPage(i + 1)}
+                      style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #2563eb', background: page === i + 1 ? '#2563eb' : '#fff', color: page === i + 1 ? '#fff' : '#2563eb', fontWeight: page === i + 1 ? 700 : 400, cursor: 'pointer' }}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                  <button onClick={() => setPage(page + 1)} disabled={page === pageCount} style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #e5e7eb', background: page === pageCount ? '#e5e7eb' : '#fff', color: '#222', cursor: page === pageCount ? 'not-allowed' : 'pointer' }}>Next</button>
+                </div>
+              )}
             {/* Add PO Modal */}
             <Modal open={showAddPo} onClose={() => setShowAddPo(false)}>
               <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 16 }}>Add Purchase Order</div>
