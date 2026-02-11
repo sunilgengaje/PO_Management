@@ -1,9 +1,12 @@
-export default function Input({ label, error, ...props }) {
+import React from "react";
+
+const Input = React.forwardRef(function Input({ label, error, ...props }, ref) {
   return (
     <label style={{ display: "block", marginBottom: 16 }}>
       <span style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>{label}</span>
       <input
         {...props}
+        ref={ref}
         style={{
           width: "100%",
           padding: "12px",
@@ -17,4 +20,6 @@ export default function Input({ label, error, ...props }) {
       )}
     </label>
   );
-}
+});
+
+export default Input;
