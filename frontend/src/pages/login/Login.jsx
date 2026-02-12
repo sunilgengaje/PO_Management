@@ -17,12 +17,14 @@
 
 
 import { useState, useRef, useEffect } from "react";
+import OtpVerification from "../auth/OtpVerification";
 import { useNavigate } from "react-router-dom";
 import Input from "../../components/ui/Input.jsx";
 import Button from "../../components/ui/Button.jsx";
 import Toast from "../../components/ui/Toast.jsx";
 import Loader from "../../components/ui/Loader.jsx";
 import { useAuthStore } from "../../store/authStore.js";
+import { useUiStore } from "../../store/uiStore.js";
 import { login, fetchCaptcha } from "../../api/authApi.js";
 import { sendLogoutOtp, verifyLogoutOtp } from "../../api/otpApi.js";
 import { isBlank, hasInjectionAttempt } from "../../utils/helpers.js";
@@ -36,9 +38,7 @@ export default function Login() {
   const [success, setSuccess] = useState("");
 
   const [otpRequired, setOtpRequired] = useState(false);
-  const [otp, setOtp] = useState("");
-  const [otpError, setOtpError] = useState("");
-  const [otpResentMsg, setOtpResentMsg] = useState("");
+  // OTP state is now managed by OtpVerification component
 
   const usernameRef = useRef();
   const navigate = useNavigate();
@@ -64,18 +64,7 @@ export default function Login() {
   }, [captchaRequired]);
 
   // auto-send OTP when navigating to OTP screen
-  useEffect(() => {
-    if (otpRequired && !otpResentMsg) {
-      (async () => {
-        try {
-          await sendLogoutOtp({ username, password });
-          setOtpResentMsg("OTP sent to your email.");
-        } catch (err) {
-          setOtpError("Failed to send OTP. Try again.");
-        }
-      })();
-    }
-  }, [otpRequired]);
+  // (Handled in OtpVerification or can be triggered in onResend)
 
   function validate() {
     if (isBlank(username)) return "Username required";
@@ -100,7 +89,8 @@ export default function Login() {
     }
 
     setLoginLoading(true);
-
+    const setLoading = useUiStore.getState().setLoading;
+    setLoading(true);
     try {
       const resp = await login({
         username,
@@ -157,53 +147,64 @@ export default function Login() {
       }
     } finally {
       setLoginLoading(false);
+      setLoading(false);
     }
   }
 
   // ---------------- VERIFY OTP ----------------
-  async function handleVerifyOtp(e) {
-    e.preventDefault();
-    setOtpError("");
-
+  async function handleVerifyOtp(otpVal) {
+    const setLoading = useUiStore.getState().setLoading;
+    setLoading(true);
     try {
-      const resp = await verifyLogoutOtp({ username, otp });
-
+      const resp = await verifyLogoutOtp({ username, otp: otpVal });
       if ((resp.status === "success") || resp.success) {
         setOtpRequired(false);
-        setOtp("");
         setLoginError("");
         setSuccess(resp.message || "Logged out successfully. You can now log in from a new device.");
-        // If backend returns token/user, set auth state
         if (resp.access_token && resp.user) {
           setAuth({ token: resp.access_token, user: resp.user, role: resp.user.role });
           navigate("/dashboard");
         } else {
-          // Otherwise, redirect to login for fresh login
           navigate("/login");
         }
         return;
       }
-      setOtpError(resp.message || "OTP verification failed");
+      setLoginError(resp.message || "OTP verification failed");
     } catch (err) {
-      setOtpError(err?.response?.data?.message || "OTP verification failed");
+      setLoginError(err?.response?.data?.message || "OTP verification failed");
+    } finally {
+      setLoading(false);
     }
   }
 
   // ---------------- RESEND OTP ----------------
-  async function handleResendOtp(e) {
-    e.preventDefault();
-    setOtpError("");
-    setOtpResentMsg("");
-
+  async function handleResendOtp() {
     try {
       await sendLogoutOtp({ username, password });
-      setOtpResentMsg("OTP resent to your email.");
+      setSuccess("OTP resent to your email.");
     } catch (err) {
-      setOtpError("Failed to resend OTP. Try again.");
+      setLoginError("Failed to resend OTP. Try again.");
     }
   }
 
   // ================= UI =================
+  if (otpRequired) {
+    return (
+      <OtpVerification
+        onVerify={handleVerifyOtp}
+        onResend={handleResendOtp}
+        onCancel={() => {
+          setAuth({ token: "", user: "", role: "" });
+          navigate("/login");
+        }}
+        loading={loginLoading}
+        error={loginError}
+        info={success}
+        email={username}
+      />
+    );
+  }
+
   return (
     <div style={{
       maxWidth: 400,
@@ -214,124 +215,66 @@ export default function Login() {
       boxShadow: "0 2px 12px #e0e7ef"
     }}>
       <h2 style={{ marginBottom: 24 }}>Login</h2>
-
-      {!otpRequired ? (
-        <form onSubmit={handleSubmit} autoComplete="off">
-          <Input
-            label="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoFocus
-            ref={usernameRef}
+      <form onSubmit={handleSubmit} autoComplete="off">
+        <Input
+          label="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoFocus
+          ref={usernameRef}
+        />
+        <Input
+          label="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type={showPassword ? "text" : "password"}
+        />
+        <div style={{ marginBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={showPassword}
+            onChange={() => setShowPassword(v => !v)}
+            id="showpass"
           />
-
-          <Input
-            label="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            type={showPassword ? "text" : "password"}
-          />
-
-          <div style={{ marginBottom: 12 }}>
-            <input
-              type="checkbox"
-              checked={showPassword}
-              onChange={() => setShowPassword(v => !v)}
-              id="showpass"
+          <label htmlFor="showpass" style={{ marginLeft: 8, fontSize: 13 }}>
+            Show password
+          </label>
+        </div>
+        {captchaRequired && (
+          <div style={{ marginBottom: 16 }}>
+            <img src={captchaImg} alt="captcha" style={{ marginBottom: 8 }} />
+            <Input
+              label="Enter Captcha"
+              value={captcha}
+              onChange={(e) => setCaptcha(e.target.value)}
             />
-            <label htmlFor="showpass" style={{ marginLeft: 8, fontSize: 13 }}>
-              Show password
-            </label>
           </div>
-
-          {captchaRequired && (
-            <div style={{ marginBottom: 16 }}>
-              <img src={captchaImg} alt="captcha" style={{ marginBottom: 8 }} />
-              <Input
-                label="Enter Captcha"
-                value={captcha}
-                onChange={(e) => setCaptcha(e.target.value)}
-              />
-            </div>
-          )}
-
-          <div style={{ marginBottom: 12 }}>
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              id="rememberme"
-            />
-            <label htmlFor="rememberme" style={{ marginLeft: 8, fontSize: 13 }}>
-              Remember me
-            </label>
-          </div>
-
-          <Button
-            type="submit"
-            loading={loginLoading}
-            disabled={loginLoading || !username || !password}
-          >
-            Login
-          </Button>
-        </form>
-      ) : (
-        <form onSubmit={handleVerifyOtp} autoComplete="off">
-          <div style={{ marginBottom: 16, color: "#991b1b", fontWeight: 500 }}>
-            {loginError}
-          </div>
-
-          <Input
-            label="Enter OTP"
-            value={otp}
-            onChange={e => setOtp(e.target.value)}
-            error={otpError}
-            autoFocus
+        )}
+        <div style={{ marginBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+            id="rememberme"
           />
-
-          <Button
-            type="submit"
-            loading={loginLoading}
-            disabled={loginLoading || !otp}
-            style={{ marginBottom: 12 }}
-          >
-            Verify OTP & Logout Previous
-          </Button>
-
-          <Button
-            type="button"
-            onClick={handleResendOtp}
-            style={{ marginBottom: 8 }}
-          >
-            Resend OTP
-          </Button>
-
-          <Button
-            type="button"
-            onClick={() => {
-              setAuth({ token: "", user: "", role: "" });
-              navigate("/login");
-            }}
-            style={{ marginBottom: 8, background: "#991b1b", color: "#fff" }}
-          >
-            Logout
-          </Button>
-
-          {otpResentMsg && (
-            <div style={{ color: "#2563eb", marginTop: 8 }}>
-              {otpResentMsg}
-            </div>
-          )}
-        </form>
-      )}
-
+          <label htmlFor="rememberme" style={{ marginLeft: 8, fontSize: 13 }}>
+            Remember me
+          </label>
+        </div>
+        <Button
+          type="submit"
+          loading={loginLoading}
+          disabled={loginLoading || !username || !password}
+        >
+          Login
+        </Button>
+      </form>
       <div style={{ marginTop: 18, textAlign: "center" }}>
         <span style={{ fontSize: 14 }}>Don't have an account? </span>
         <a href="/signup" style={{ color: "#2563eb", fontWeight: 600 }}>
           Sign up
         </a>
       </div>
-
       {loginLoading && <Loader />}
       <Toast message={loginError} type="error" />
       <Toast message={success} type="success" />
